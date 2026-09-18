@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aero Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/>
+            <path d="M2 12h20"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">Aero Agent</h1>
+          <p class="brand-subtitle">AI Browser Companion</p>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <button id="voice-reply-btn" title="Toggle Interactive Voice Replies (TTS)" style="background: rgba(244, 63, 94, 0.12); border: 1px solid rgba(244, 63, 94, 0.35); border-radius: 6px; cursor: pointer; color: #f43f5e; font-size: 13px; padding: 4px 7px; display: flex; align-items: center; transition: all 0.2s ease;">🔊</button>
+        <button id="reload-ext-btn" title="Reload Extension & Service Worker" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; cursor: pointer; color: #94a3b8; font-size: 13px; padding: 4px 7px; display: flex; align-items: center; transition: all 0.2s ease;">🔄</button>
+        <div id="status-indicator" class="status-pill">
+          <span class="status-dot"></span>
+          <span class="status-label">Ready</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- System Status Badges: Privacy Filter & Local Gateway -->
+    <div class="system-badges-row" style="display: flex; gap: 8px; margin: -6px 0 8px 0; font-size: 11px;">
+      <div id="privacy-badge" class="privacy-pill" style="display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 9999px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #10b981; font-weight: 600;">
+        <span>🛡️</span>
+        <span>Privacy Filter: Active</span>
+      </div>
+      <div id="server-badge" class="server-pill" style="display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 9999px; background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.4); color: #60a5fa; font-weight: 600;">
+        <span id="server-dot" style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #3b82f6;"></span>
+        <span id="server-label">Server: 127.0.0.1:5000</span>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="app-nav-tabs" style="display: flex; gap: 6px; margin-bottom: 10px; background: rgba(0,0,0,0.04); padding: 3px; border-radius: 10px; border: 1px solid var(--border-soft);">
+      <button class="nav-tab active" data-tab="actions" id="tab-btn-actions" style="flex: 1; padding: 6px 6px; font-size: 11px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; background: #ffffff; color: var(--pink-600); box-shadow: 0 1px 3px rgba(0,0,0,0.08); transition: all 0.2s ease;">⚡ Actions</button>
+      <button class="nav-tab" data-tab="hitl" id="tab-btn-hitl" style="flex: 1; padding: 6px 6px; font-size: 11px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; background: transparent; color: var(--text-muted); transition: all 0.2s ease; display: inline-flex; align-items: center; justify-content: center; gap: 4px;">
+        <span>⚠️ Action Req.</span>
+        <span id="hitl-badge" style="display: none; width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; box-shadow: 0 0 6px #f59e0b;"></span>
+      </button>
+    </nav>
+
+    <!-- Text & Document Input Box -->
+    <section class="input-card">
+      <div class="input-wrapper" style="display: flex; align-items: center; gap: 4px;">
+        <input type="file" id="doc-file-input" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.json,.csv" style="display: none;" />
+        <button id="doc-upload-btn" class="upload-btn" title="Attach Document (PDF, Image, Text)" style="background: none; border: none; cursor: pointer; font-size: 16px; padding: 0 6px; color: var(--text-muted); display: flex; align-items: center; transition: color 0.2s ease;" type="button">📎</button>
+        <input
+          type="text"
+          id="command-input"
+          class="text-input"
+          placeholder="Ask me to do anything on this page..."
+          autocomplete="off"
+          spellcheck="false"
+          style="flex: 1;"
+        />
+        <button id="send-btn" class="send-btn" title="Execute Command">
+          <span>Run</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- Uploaded File Badge -->
+    <div id="attached-file-badge" style="display: none; align-items: center; justify-content: space-between; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 5px 10px; font-size: 11px; color: #1d4ed8; margin: -6px 0 6px 0;">
+      <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+        <span id="attached-file-icon">📄</span>
+        <span id="attached-file-name" style="font-weight: 600; overflow: hidden; text-overflow: ellipsis; max-width: 200px;">report.pdf</span>
+        <span id="attached-file-size" style="color: #64748b; font-size: 10px;">(24 KB)</span>
+      </div>
+      <button id="remove-attached-file-btn" title="Remove attachment" style="background: none; border: none; cursor: pointer; color: #94a3b8; font-size: 14px; line-height: 1; padding: 0 2px;">✕</button>
+    </div>
+
+    <!-- Tab 1: Actions & Execution View -->
+    <div id="tab-view-actions" style="display: flex; flex-direction: column; gap: 12px;">
+      <!-- Large Voice Action Section -->
+      <section class="voice-centerpiece">
+        <div class="mic-button-wrapper">
+          <button id="mic-btn" class="large-mic-btn" title="Click to Speak">
+            <div class="mic-pulse-ring"></div>
+            <div class="mic-pulse-ring ring-2"></div>
+            <div class="mic-icon-inner">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="22"/>
+              </svg>
+            </div>
+          </button>
+        </div>
+        <div class="mic-hint-text">
+          <span id="mic-status-label">Tap to speak in English</span>
+        </div>
+      </section>
+
+      <!-- Live Speech Transcription Box -->
+      <section id="voice-recording-bar" class="live-transcript-card hidden">
+        <div class="transcript-header">
+          <div class="wave-visualizer">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <span class="transcript-badge">Live Voice</span>
+          <span id="recording-timer" class="recording-timer">0:00</span>
+          <button id="voice-stop-btn" class="stop-pill-btn">Done</button>
+        </div>
+        <div class="transcript-body">
+          <p id="live-transcript" class="transcript-text">Listening to your voice...</p>
+        </div>
+      </section>
+
+      <!-- Agent Activity & Action Description Card -->
+      <section class="action-card">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="card-icon">⚡</span>
+            <h2 class="card-title">Agent Actions</h2>
+          </div>
+          <div id="plan-meta" class="meta-tags" style="display: none;">
+            <span id="confidence-badge" class="tag tag-pink">98% Match</span>
+            <span id="source-badge" class="tag tag-gray">On-Device</span>
+          </div>
+        </div>
+
+        <div id="reasoning-box" class="reasoning-container">
+          <p class="empty-state">Type a command or tap the microphone to start.</p>
+        </div>
+
+        <!-- Inline Sign-in / Verification Required Banner (Visible directly on Actions tab when paused) -->
+        <div id="inline-hitl-card" style="display: none; background: rgba(245, 158, 11, 0.12); border: 1.5px solid #f59e0b; border-radius: 12px; padding: 12px; margin: 10px 0; flex-direction: column; gap: 8px;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 16px;">⏸️</span>
+              <span id="inline-hitl-title" style="font-weight: 700; font-size: 12px; color: #b45309;">Sign-in / Verification Required</span>
+            </div>
+            <span style="font-size: 10px; font-weight: 700; background: #f59e0b; color: white; padding: 2px 7px; border-radius: 4px;">PAUSED</span>
+          </div>
+          <p id="inline-hitl-desc" style="margin: 0; font-size: 11.5px; color: #78350f; line-height: 1.45;">
+            The agent reached a login or verification screen. Complete sign-in in your browser window, then click Continue:
+          </p>
+          <button id="inline-hitl-continue-btn" style="width: 100%; padding: 9px; font-size: 12.5px; font-weight: 700; background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; border-radius: 8px; cursor: pointer; box-shadow: 0 3px 10px rgba(16, 185, 129, 0.3); display: flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.2s ease;">
+            <span>✅</span>
+            <span>I've Signed In in Browser — Continue Task</span>
+          </button>
+        </div>
+
+        <!-- Live Step Progress List -->
+        <div id="plan-steps-container" class="steps-container" style="display: none;">
+          <div class="steps-heading">
+            <span>Executing Steps</span>
+            <span class="steps-badge">Sub-200ms</span>
+          </div>
+          <div id="plan-steps-list" class="steps-list"></div>
+        </div>
+
+        <!-- Persistent Generated Email / Artifact Card -->
+        <div id="generated-artifact-card" style="display:none; flex-direction:column; gap:8px;
+             background:#ffffff; border:1.5px solid #10b981; border-radius:12px; padding:12px 14px;
+             margin:10px 0; box-shadow:0 4px 14px rgba(16,185,129,0.15); animation:fadeSlideIn 0.3s ease;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:6px; font-weight:700; font-size:12px; color:#065f46;">
+              <span>✉️</span>
+              <span id="artifact-sent-label">Email Composed in Gmail</span>
+            </div>
+          </div>
+          
+          <div style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:6px 10px; font-size:11px;">
+            <div style="margin-bottom:3px;"><strong style="color:#374151;">To:</strong> <span id="artifact-recipient" style="color:#2563eb; font-family:monospace;"></span></div>
+            <div><strong style="color:#374151;">Subject:</strong> <span id="artifact-subject" style="color:#111827; font-weight:600;"></span></div>
+          </div>
+
+          <div id="artifact-content" style="max-height:160px; overflow-y:auto; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px 10px; font-size:11px; color:#334155; line-height:1.45; white-space:pre-wrap; word-break:break-word;"></div>
+          
+          <div style="font-size:10px; color:#059669; font-weight:500; display:flex; align-items:center; gap:4px;">
+            <span>✓</span> Composed &amp; ready in Gmail
+          </div>
+        </div>
+      </section>
+
+      <!-- Action Tools Bar -->
+      <div class="utility-row">
+        <button id="summarize-page-btn" class="util-btn" title="Summarize Page or Attached PDF with Floating Pop-Up">
+          <span style="color: var(--pink-600);">⚡</span>
+          <span>Summarize</span>
+        </button>
+        <button id="toggle-tags-btn" class="util-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+            <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+            <line x1="7" y1="7" x2="7.01" y2="7"/>
+          </svg>
+          Highlight Elements
+        </button>
+        <button id="verify-log-btn" class="util-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+          Audit Log
+        </button>
+      </div>
+    </div>
+
+    <!-- Tab 2: Interactive Human-In-The-Loop (HITL) Drawer -->
+    <div id="tab-view-hitl" style="display: none; flex-direction: column; gap: 12px;">
+      <div style="background: rgba(245, 158, 11, 0.08); border: 1.5px solid #f59e0b; border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 12px;">
+        
+        <!-- Header Banner -->
+        <div style="display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(245, 158, 11, 0.25); padding-bottom: 10px;">
+          <div style="width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(135deg, #f59e0b, #d97706); display: flex; align-items: center; justify-content: center; font-size: 17px; color: white; flex-shrink: 0; box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35);">🔐</div>
+          <div>
+            <h3 id="hitl-banner-title" style="font-size: 13.5px; font-weight: 700; color: #92400e; margin: 0;">Sign-in Required</h3>
+            <p id="hitl-banner-sub" style="font-size: 11px; color: #b45309; margin: 2px 0 0 0;">Select your preferred sign-in method to continue</p>
+          </div>
+        </div>
+
+        <p id="hitl-banner-desc" style="font-size: 11.5px; color: #78350f; line-height: 1.45; margin: 0; background: #ffffff; padding: 9px 12px; border-radius: 8px; border: 1px solid #fde68a;">
+          The agent reached a sign-in screen. You can either sign in yourself directly in the browser, or provide the credentials below for the agent to auto-login.
+        </p>
+
+        <!-- OPTION 1: User signs in manually in browser -->
+        <div style="background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 10px; font-weight: 800; background: #e0f2fe; color: #0369a1; padding: 2px 7px; border-radius: 9999px; text-transform: uppercase;">Option 1</span>
+              <span style="font-size: 12px; font-weight: 700; color: #0f172a;">Sign In Yourself in Browser</span>
+            </div>
+            <span style="font-size: 11px; color: #64748b;">Manual</span>
+          </div>
+          <p style="font-size: 11px; color: #64748b; margin: 0; line-height: 1.4;">
+            Sign in on the webpage using your browser password manager, passkey, or SSO.
+          </p>
+
+          <!-- One-Click SSO Options (if detected on page) -->
+          <div id="hitl-sso-container" style="display: flex; flex-direction: column; gap: 5px; margin: 2px 0;">
+            <span style="font-size: 10.5px; font-weight: 600; color: #92400e;">⚡ Detected One-Click SSO:</span>
+            <div id="hitl-sso-buttons" style="display: flex; flex-wrap: wrap; gap: 6px;">
+              <button class="clarify-sso-chip" data-sso="Google" style="padding: 5px 10px; font-size: 11px; font-weight: 600; border-radius: 6px; border: 1px solid #fed7aa; background: #fff; cursor: pointer; color: #9a3412;">Continue with Google</button>
+              <button class="clarify-sso-chip" data-sso="Apple" style="padding: 5px 10px; font-size: 11px; font-weight: 600; border-radius: 6px; border: 1px solid #fed7aa; background: #fff; cursor: pointer; color: #9a3412;">Continue with Apple</button>
+            </div>
+          </div>
+
+          <button id="hitl-continue-btn" style="width: 100%; padding: 9px; font-size: 12px; font-weight: 700; background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; border-radius: 8px; cursor: pointer; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25); display: flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.2s ease;">
+            <span>✅</span>
+            <span>I've Signed In in Browser — Continue Task</span>
+          </button>
+        </div>
+
+        <!-- DIVIDER -->
+        <div style="display: flex; align-items: center; gap: 8px; margin: 2px 0;">
+          <div style="flex: 1; height: 1px; background: rgba(245, 158, 11, 0.3);"></div>
+          <span style="font-size: 10px; font-weight: 800; color: #b45309; letter-spacing: 0.5px;">OR</span>
+          <div style="flex: 1; height: 1px; background: rgba(245, 158, 11, 0.3);"></div>
+        </div>
+
+        <!-- OPTION 2: Agent Auto-Login with dynamic website-specific fields -->
+        <div style="background: #ffffff; border: 1.5px solid #fed7aa; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.03);">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 10px; font-weight: 800; background: #ffedd5; color: #c2410c; padding: 2px 7px; border-radius: 9999px; text-transform: uppercase;">Option 2</span>
+              <span style="font-size: 12px; font-weight: 700; color: #0f172a;" id="hitl-agent-opt-title">Let Agent Sign You In</span>
+            </div>
+            <span style="font-size: 11px; color: #ea580c; font-weight: 600;">Autonomous</span>
+          </div>
+          <p id="hitl-agent-opt-desc" style="font-size: 11px; color: #64748b; margin: 0; line-height: 1.4;">
+            Provide the details requested by this website and the agent will automatically type them, submit the form, and follow up next steps.
+          </p>
+
+          <!-- Dynamically Injected Form Fields matching the target website -->
+          <div id="hitl-dynamic-fields-container" style="display: flex; flex-direction: column; gap: 7px; margin-top: 2px;">
+            <div class="hitl-dynamic-field-group">
+              <label style="font-size: 10.5px; font-weight: 600; color: #475569; margin-bottom: 2px; display: block;">Username or Email</label>
+              <input type="text" id="hitl-username-input" placeholder="Enter username or email..." style="width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1.5px solid #e2e8f0; border-radius: 7px; font-size: 11.5px;" />
+            </div>
+            <div class="hitl-dynamic-field-group">
+              <label style="font-size: 10.5px; font-weight: 600; color: #475569; margin-bottom: 2px; display: block;">Password</label>
+              <input type="password" id="hitl-password-input" placeholder="Enter password..." style="width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1.5px solid #e2e8f0; border-radius: 7px; font-size: 11.5px;" />
+            </div>
+          </div>
+
+          <button id="hitl-submit-creds-btn" style="width: 100%; margin-top: 4px; padding: 9px; background: linear-gradient(135deg, #f59e0b, #d97706); color: white; font-size: 12px; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3); display: flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.2s ease;">
+            <span>🔑</span>
+            <span id="hitl-submit-creds-btn-text">Fill &amp; Auto-Login with Agent ➔</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Autonomous Agent Clarification Card -->
+    <div id="clarification-card" class="clarify-card hidden">
+      <div class="clarify-header">
+        <span class="clarify-icon">🤖</span>
+        <div>
+          <div class="clarify-title" id="clarify-title">I need a few details</div>
+          <div class="clarify-subtitle" id="clarify-subtitle">Tell me what to fill in:</div>
+        </div>
+        <button id="clarify-cancel-btn" class="clarify-x">✕</button>
+      </div>
+      <div id="clarify-sso-container" class="clarify-sso-container hidden">
+        <span class="clarify-sso-label">⚡ One-Click Login Options:</span>
+        <div id="clarify-sso-buttons" class="clarify-sso-buttons"></div>
+      </div>
+      <div id="clarify-fields" class="clarify-fields"></div>
+      <div class="clarify-actions">
+        <button id="clarify-speak-btn" class="clarify-btn-voice">
+          🎙️ Speak All
+        </button>
+        <button id="clarify-run-btn" class="clarify-btn-run">
+          ✅ Fill &amp; Execute
+        </button>
+      </div>
+      <div id="clarify-voice-hint" class="clarify-voice-hint hidden">
+        <em>Speak values in order, separated by commas...</em>
+      </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmation-modal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <div class="modal-badge">⚠️ Safety Confirmation</div>
+        <h3 class="modal-title">Confirm Action</h3>
+        <p id="modal-message" class="modal-desc">The agent is asking to perform a sensitive action.</p>
+        <div id="modal-details" class="modal-details-box"></div>
+        <div class="modal-actions">
+          <button id="modal-reject-btn" class="btn-cancel">Cancel</button>
+          <button id="modal-confirm-btn" class="btn-confirm">Approve</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audit Log History Modal -->
+    <div id="audit-log-modal" class="modal-backdrop hidden">
+      <div class="modal-card audit-modal-card">
+        <div class="modal-badge">📋 Cryptographic Execution Audit</div>
+        <div class="audit-modal-header" style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <h3 class="modal-title" style="margin:0;">Task & Action History</h3>
+            <span class="audit-verified-pill">SHA-256 Verified ✓</span>
+          </div>
+          <button id="audit-modal-x-btn" class="modal-x-close" title="Close" style="background:none; border:none; font-size:18px; line-height:1; cursor:pointer; color:#9ca3af; padding:4px 8px; border-radius:6px;">✕</button>
+        </div>
+        <p class="modal-desc">Complete immutable record of goals, URLs visited, queries searched, and generated content.</p>
+        <div id="audit-log-content" class="audit-log-list"></div>
+        <div class="modal-actions">
+          <button id="audit-modal-close-btn" class="btn-confirm" style="width: 100%;">Close History</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Executive Summary Pop-Up Modal -->
+    <div id="summary-modal" class="modal-backdrop hidden">
+      <div class="modal-card summary-modal-card" style="max-height: 85vh; display: flex; flex-direction: column; overflow: hidden; padding: 16px; width: 94%; max-width: 440px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-soft); padding-bottom: 10px; flex-shrink: 0;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, #f43f5e, #fb7185); display: flex; align-items: center; justify-content: center; color: white; font-size: 14px;">📑</div>
+            <div>
+              <h3 id="summary-modal-title" style="margin: 0; font-size: 13px; font-weight: 700; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px;">Executive Summary</h3>
+              <span style="font-size: 10px; color: #10b981; font-weight: 600;">✓ Grounded Local AI Synthesis</span>
+            </div>
+          </div>
+          <button id="summary-modal-x-btn" style="background: none; border: none; font-size: 18px; line-height: 1; cursor: pointer; color: #9ca3af; padding: 4px 8px; border-radius: 6px;">✕</button>
+        </div>
+
+        <div id="summary-modal-body" style="flex: 1; overflow-y: auto; padding: 12px 2px; font-size: 12px; color: var(--text-main); line-height: 1.6;"></div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-soft); padding-top: 10px; flex-shrink: 0; gap: 8px;">
+          <button id="summary-popup-page-btn" style="background: #fff1f2; border: 1px solid #fecdd3; color: #e11d48; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 5px;">
+            <span>🗗</span> Pop-up on Webpage
+          </button>
+          <div style="display: flex; gap: 6px;">
+            <button id="summary-modal-copy-btn" class="btn-cancel" style="padding: 6px 12px; font-size: 11px;">📋 Copy</button>
+            <button id="summary-modal-close-btn" class="btn-confirm" style="padding: 6px 12px; font-size: 11px;">Done</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

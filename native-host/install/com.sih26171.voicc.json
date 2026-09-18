@@ -1,0 +1,9 @@
+{
+  "name": "com.sih26171.voicc",
+  "description": "SIH26171 on-device browser agent host",
+  "path": "C:\\Users\\Asus\\Desktop\\secondroundSIH\\native-host\\install\\voicc_host.bat",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://habnpeooaamdocmolhcnjfpjokiaefja/"
+  ]
+}

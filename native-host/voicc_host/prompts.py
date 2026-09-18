@@ -1,0 +1,334 @@
+"""Prompt construction (phases 46, 66, 126, 136).
+
+Three rules shape everything in this file:
+
+  * The draft model's prompt is minimal (phase 31). Its entire value is
+    speed; a bloated prompt defeats it. It gets the task and a bare element
+    list -- no memory, no evidence rules, no examples.
+
+  * The full model's prompt is memory-aware and evidence-aware (phase 66):
+    retrieved memory goes in, and the model is told it must name the
+    element text that justifies each action.
+
+  * Prompts are split into a stable prefix and a volatile suffix (phase
+    107). The prefix -- system rules, task, memory -- is byte-identical
+    across the calls of one task, so the server can reuse its KV cache.
+    Anything that changes per step (the element list, the last error) lives
+    in the suffix. Putting a timestamp or a re-ordered memory list in the
+    prefix silently destroys the reuse, which is why prefix assembly is a
+    function rather than an f-string at each call site.
+
+`docs/136-prompt-templates.md` is generated from this module, so the
+written submission cannot drift from the frozen code.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .schemas import Element, PageState
+
+#: Phase 150 -- hard cap on injected memory, enforced at the prompt layer
+#: regardless of how many facts retrieval hands back.
+MAX_MEMORY_FACTS = 3
+
+#: Rough chars-per-token for local Qwen/Llama tokenizers. Only used for the
+#: phase 126 before/after comparison, never for correctness.
+_CHARS_PER_TOKEN = 3.6
+
+
+def estimate_tokens(text: str) -> int:
+    return int(len(text) / _CHARS_PER_TOKEN) + 1
+
+
+# --------------------------------------------------------------------------
+# System prompts
+# --------------------------------------------------------------------------
+
+#: Draft planner. Form-aware, tool-calling skilled planner.
+SYSTEM_DRAFT = (
+    "You are a browser automation agent with specialized skills: fill_form, click_element, scroll_page, and navigate.\n"
+    "Reply with JSON only.\n"
+    'Schema: {"plan":{"actions":[{"type":"click|type|scroll|select|navigate'
+    '|wait_for|done","tag_id":<int>,"value":"","intent":""}],'
+    '"confidence":0.0-1.0,"reasoning":"","expected_outcome":""},'
+    '"ambiguous":false}\n'
+    "SKILLS:\n"
+    "- Form Filling: To fill an input/textarea, match the field name to the element tag_id and use type with the specified value.\n"
+    "- Click: To click a button, link, or tab, use click with the target element's tag_id.\n"
+    "- Multi-step: When filling a form and creating/submitting, chain type actions followed by click on the submit button.\n"
+    "Rules:\n"
+    "- Use tag_id from the supplied list. Never output pixel coordinates.\n"
+    "- intent = the exact visible label or placeholder of the element.\n"
+    "- Set ambiguous=true and confidence < 0.3 if the target is not on page."
+)
+
+#: Full reasoner. Browser-Use & Skyvern style skilled autonomous agent.
+SYSTEM_TEXT = (
+    "You are an on-device browser agent equipped with web automation skills:\n"
+    "1. Form Filling Skill: Identify input/textarea/select elements. To enter text, generate a 'type' action with the element's tag_id and the required text value.\n"
+    "2. Interactive Click Skill: Identify buttons, links, tabs, and checkboxes. Generate a 'click' action with the target tag_id.\n"
+    "3. Multi-Step Workflow Skill: Chain multiple actions in order (e.g. fill field 1 -> fill field 2 -> click submit button).\n"
+    "4. Navigation & Search Skill: Use search inputs to query or navigate to target URLs.\n\n"
+    "Strict Execution Rules:\n"
+    "1. Reference elements by tag_id only from the provided list. Never invent tag_ids or output coordinates.\n"
+    "2. If an input field is requested (e.g. 'enter repository name airtel'), use type with value='airtel' on the matching input element.\n"
+    "3. intent must be the element's visible label or placeholder, copied verbatim.\n"
+    "4. expected_outcome must describe the visible post-action state.\n"
+    'Reply with JSON only: {"actions":[{"type":"click|type|scroll|select|navigate|done","tag_id":<int>,"value":"","intent":""}],'
+    '"confidence":0.0-1.0,"reasoning":"","expected_outcome":""}'
+)
+
+#: Vision selection over a numbered overlay.
+SYSTEM_VISION = (
+    "You are looking at a screenshot with numbered tags drawn on the "
+    "interactive elements.\n"
+    "Return the number of the single element that matches the task.\n"
+    "Rules:\n"
+    "1. Output only a number that is actually drawn in the image.\n"
+    "2. If no drawn number matches, return confidence below 0.3.\n"
+    "3. List the numbers you considered and rejected.\n"
+    'Reply with JSON only: {"tag_id":<int>,"confidence":0.0-1.0,'
+    '"reasoning":"","rejected":[]}'
+)
+
+#: End-of-plan verification (phase 48).
+SYSTEM_VERIFY = (
+    "You check whether a browser task reached its expected end state.\n"
+    "Compare the expected outcome against the page as it is now.\n"
+    "Judge only what the element list shows. Do not assume success.\n"
+    'Reply with JSON only: {"satisfied":true|false,"confidence":0.0-1.0,'
+    '"reason":""}'
+)
+
+
+# --------------------------------------------------------------------------
+# Rendering helpers
+# --------------------------------------------------------------------------
+
+
+def render_element(element: Element) -> str:
+    """One line per element. Line-per-element beats JSON here.
+
+    The element list is the largest part of every prompt, so its encoding
+    is where phase 126's token savings actually came from: dropping JSON
+    punctuation and empty fields cut roughly a fifth of the prompt on a
+    data-dense page, with no change in selection accuracy.
+    """
+    parts = [f"[{element.tag_id}] {element.role}"]
+    label = element.label()
+    if label:
+        parts.append(f'"{label[:80]}"')
+    if element.value and element.value != label:
+        parts.append(f"value={element.value[:40]}")
+    if not element.enabled:
+        parts.append("(disabled)")
+    if element.region:
+        parts.append(f"@{element.region}")
+    return " ".join(parts)
+
+
+def render_elements(page: PageState, *, changed_only: bool = False) -> str:
+    """Render the element list, optionally only what changed.
+
+    `changed_only` pairs with Mohit's incremental DOM diffing (phase 104):
+    on a re-read where only one field changed, there is no reason to spend
+    tokens restating the other forty elements.
+    """
+    elements = page.elements
+    if changed_only and page.changed_tag_ids:
+        changed = set(page.changed_tag_ids)
+        elements = [e for e in elements if e.tag_id in changed]
+    if not elements:
+        return "(no interactive elements found)"
+    return "\n".join(render_element(e) for e in elements)
+
+
+def render_memory(facts: list[str]) -> str:
+    """Phase 66/150 -- injected memory, hard-capped and stably ordered.
+
+    Ordering is caller-supplied (retrieval rank) and never re-sorted here,
+    because a re-ordered list would break the shared prefix.
+    """
+    kept = [f.strip() for f in facts if f and f.strip()][:MAX_MEMORY_FACTS]
+    if not kept:
+        return ""
+    lines = "\n".join(f"- {fact}" for fact in kept)
+    return f"What you already know:\n{lines}"
+
+
+# --------------------------------------------------------------------------
+# Prompt assembly
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class BuiltPrompt:
+    """A prompt split at the KV-cache boundary."""
+
+    system: str
+    prefix: str
+    suffix: str
+
+    @property
+    def text(self) -> str:
+        return f"{self.prefix}{self.suffix}"
+
+    def tokens(self) -> int:
+        return estimate_tokens(self.system) + estimate_tokens(self.text)
+
+
+def build_draft_prompt(task: str, page: PageState) -> BuiltPrompt:
+    """Phase 31 -- minimal by design. Task plus elements, nothing else."""
+    prefix = f"Task: {task}\n"
+    suffix = f"Elements:\n{render_elements(page)}\n"
+    return BuiltPrompt(system=SYSTEM_DRAFT, prefix=prefix, suffix=suffix)
+
+
+def build_reasoning_prompt(task: str, page: PageState, *,
+                           memories: list[str] | None = None,
+                           last_error: str = "",
+                           changed_only: bool = False) -> BuiltPrompt:
+    """Phase 46 + 66 -- the full text path, memory- and evidence-aware.
+
+    Prefix (stable for the whole task): task, memory, evidence rule.
+    Suffix (changes per step): url, element list, last error.
+    """
+    prefix_parts = [f"Task: {task}"]
+    memory_block = render_memory(memories or [])
+    if memory_block:
+        prefix_parts.append(memory_block)
+    prefix_parts.append(
+        "Every action must be justified by an element in the list below. "
+        "Copy that element's visible label into intent as your evidence.")
+    prefix = "\n\n".join(prefix_parts) + "\n\n"
+
+    suffix_parts = []
+    if page.url:
+        suffix_parts.append(f"Page: {page.title or page.url}")
+    suffix_parts.append(
+        ("Changed elements:\n" if changed_only and page.changed_tag_ids
+         else "Elements:\n") + render_elements(page, changed_only=changed_only))
+    if last_error:
+        suffix_parts.append(
+            f"The previous attempt failed: {last_error}\n"
+            "Do not repeat the same action. If it cannot be done, say so.")
+    suffix = "\n\n".join(suffix_parts) + "\n"
+    return BuiltPrompt(system=SYSTEM_TEXT, prefix=prefix, suffix=suffix)
+
+
+def build_vision_prompt(task: str, visible_tags: list[int],
+                        *, memories: list[str] | None = None) -> BuiltPrompt:
+    """Prompt for the numbered-overlay selection call."""
+    prefix = f"Task: {task}\n"
+    memory_block = render_memory(memories or [])
+    if memory_block:
+        prefix += f"\n{memory_block}\n"
+    tags = ", ".join(str(t) for t in sorted(visible_tags)) or "none"
+    suffix = f"\nNumbers drawn on the image: {tags}\n"
+    return BuiltPrompt(system=SYSTEM_VISION, prefix=prefix, suffix=suffix)
+
+
+def build_verification_prompt(task: str, expected_outcome: str,
+                              page: PageState,
+                              executed: list[str]) -> BuiltPrompt:
+    """Phase 48 -- one check after the whole plan, not one per step."""
+    prefix = (f"Task: {task}\n"
+              f"Expected end state: {expected_outcome or 'the task is done'}\n")
+    steps = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(executed)) or "none"
+    suffix = (f"\nActions that ran:\n{steps}\n\n"
+              f"Page now:\n{render_elements(page)}\n")
+    return BuiltPrompt(system=SYSTEM_VERIFY, prefix=prefix, suffix=suffix)
+
+
+SYSTEM_AUTONOMOUS_AGENT = (
+    "You are an autonomous browser agent. Your job is to complete the user's goal by deciding the next web action based on the live screen visual context and interactive elements on the page.\n\n"
+    "Output JSON only in this exact format:\n"
+    "{\n"
+    '  "actions": [\n'
+    '    {"type": "click", "tag_id": 1, "intent": "Click Compose button"},\n'
+    '    {"type": "type", "tag_id": 4, "value": "siddubakka@example.com", "intent": "Type recipient"}\n'
+    "  ],\n"
+    '  "reasoning": "Explain concisely what you are doing and why.",\n'
+    '  "is_done": false\n'
+    "}\n\n"
+    "Action Types:\n"
+    '- "click": click button, link, tab, checkbox, or list item (requires tag_id)\n'
+    '- "type": type text into input or contenteditable area (requires tag_id, value)\n'
+    '- "press_key": send key like Tab or Enter to confirm chip/submission (requires key: "Tab"|"Enter")\n'
+    '- "navigate": go to URL (requires value="https://...")\n'
+    '- "scroll": scroll down/up (requires value="down"|"up")\n'
+    '- "done": the user goal has been completely achieved (tag_id null, is_done true)\n\n'
+    "Rules:\n"
+    "1. Only use tag_id numbers that exist in the ELEMENTS list.\n"
+    "2. For typing, specify the exact text in 'value'.\n"
+    "3. You can chain multiple actions if they are ready (e.g. fill inputs or click buttons).\n"
+    "4. If the goal is completely finished, return actions with type 'done' and set is_done=true.\n"
+    "5. Fields or values labeled [REDACTED_*] or ●●●●●● represent client-side privacy-masked inputs (passwords, PII). Treat them normally and proceed with form submission or navigation."
+)
+
+
+def build_agent_step_prompt(goal: str, page_url: str, page_title: str,
+                            elements: list[dict], vlm_summary: str = "",
+                            history: list[dict] | None = None,
+                            alerts: list[str] | None = None) -> str:
+    """Builds the single-turn prompt for the autonomous agent loop."""
+    rendered_els = []
+    for el in elements[:60]: # Top 60 candidate interactive elements
+        tag = el.get("tag_id", el.get("id"))
+        role = el.get("role") or el.get("tag", "element")
+        lbl = el.get("aria_label") or el.get("text") or el.get("name") or el.get("placeholder") or ""
+        val = el.get("value", "")
+        line = f"[{tag}] {role}"
+        if lbl:
+            line += f' "{str(lbl).strip()[:60]}"'
+        if val and val != lbl:
+            line += f' value="{str(val).strip()[:40]}"'
+        if el.get("disabled") or el.get("aria_disabled"):
+            line += " disabled=true"
+        rendered_els.append(line)
+    
+    rendered_elements_str = "\n".join(rendered_els) if rendered_els else "(No elements found)"
+
+    hist_lines = []
+    if history:
+        for i, h in enumerate(history[-12:]):  # Show last 12 turns so LLM has enough context to detect repetition
+            status = "✓" if h.get('success') else "✗"
+            hist_lines.append(f"Turn {h.get('turn', i+1)}: [{status}] Action={h.get('action')} on [{h.get('target')}] Thought={h.get('thought', '')[:80]}")
+    history_str = "\n".join(hist_lines) if hist_lines else "None (first step)"
+
+    prompt = (
+        f"<|im_start|>system\n{SYSTEM_AUTONOMOUS_AGENT}\n<|im_end|>\n"
+        f"<|im_start|>user\n"
+        f"GOAL: {goal}\n"
+        f"PAGE: {page_url} ({page_title})\n"
+    )
+    if vlm_summary:
+        prompt += f"VISUAL SCREEN CONTEXT (Moondream VLM): {vlm_summary}\n"
+    if alerts and len(alerts) > 0:
+        clean_alerts = [str(a).strip() for a in alerts if str(a).strip()]
+        if clean_alerts:
+            prompt += f"ACTIVE ON-SCREEN ALERTS / ERRORS:\n" + "\n".join(f"- ⚠️ {a}" for a in clean_alerts) + "\n"
+            prompt += "CRITICAL: If an alert indicates the input was rejected or taken (e.g. name already exists), change the input value immediately!\n"
+    prompt += (
+        f"\nINTERACTIVE ELEMENTS ON SCREEN:\n{rendered_elements_str}\n\n"
+        f"ACTION HISTORY SO FAR:\n{history_str}\n\n"
+        f"Decide the single best next action (or chained actions) to progress towards completing the goal. Never click a disabled element.\n"
+        f"<|im_end|>\n"
+        f"<|im_start|>assistant\n"
+    )
+    return prompt
+
+
+def stable_prefix(prompt: BuiltPrompt) -> str:
+    """The bytes that must not change across one task's calls (phase 107)."""
+    return f"{prompt.system}\n\n{prompt.prefix}"
+
+
+ALL_SYSTEM_PROMPTS = {
+    "draft": SYSTEM_DRAFT,
+    "text": SYSTEM_TEXT,
+    "vision": SYSTEM_VISION,
+    "verify": SYSTEM_VERIFY,
+    "agent_loop": SYSTEM_AUTONOMOUS_AGENT,
+}
+
